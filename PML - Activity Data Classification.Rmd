@@ -1,0 +1,131 @@
+---
+title: "Practical Machine Learning: Activity Data Classification"
+author: "Cameron G"
+date: "September 10, 2017"
+output: html_document
+---
+
+**Overview**
+
+In this project, we look at data from personal activity devices, such as Jawbone Up, Nike FuelBand, and Fitbit. Six participants performed barbell lifts several ways, generating data from accelerometers on the belt, forearm, arm, and dumbell. The source of the data can be found [here](http://groupware.les.inf.puc-rio.br/har).
+
+This project explores ways to use practical machine learning to predict the types of movement participants engaged in. A model was built using a classification tree, but it was found to have a high estimated out-of-sample error rate. A second model using Random Forest generated a more accurate estimate, with an out-of-sample error rate of 0.1%.
+
+**Loading and Preprocessing Data**
+
+First, we load the data into R and divide it into training and test sets. The training set is further subdivided into 2 sets for the purpose of building and testing the model. The "testing" set will not be examined until a model has been trained and tested on the "training" set.
+
+```{r}
+library(caret)
+training <- read.csv("pml-training.csv",na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv("pml-testing.csv",na.strings=c("NA","#DIV/0!",""))
+
+set.seed(1234)
+inTrain <- createDataPartition(training$classe,p=0.7,list=FALSE)
+train_set <- training[inTrain,]
+test_set <- training[-inTrain,]
+```
+
+Examining the training and test sets, we can see that there are 160 variables in the data, with 13,737 observations in the training set and 5,885 observations in the test set.
+
+```{r}
+dim(train_set)
+dim(test_set)
+```
+
+Before proceeding with model building, it is a good idea to remove predictors with near zero variance from both the training and test sets. This will eliminate predictors with a particularly low percentage of unique values.
+
+```{r}
+NZV <- nearZeroVar(training,saveMetrics=TRUE)
+train_set <- train_set[,NZV$nzv==FALSE]
+test_set <- test_set[,NZV$nzv==FALSE]
+```
+
+The first column is removed because it appears to only be an index for the observations. Additionally, a large number of variables have NA values. These are identified and removed from the training and test sets, resulting in 58 remaining predictors.
+
+```{r}
+##Remove the first column
+train_set <- train_set[,-1]
+test_set <- test_set[,-1]
+
+##Remove variables with NA values
+train_set <- train_set[,!sapply(train_set,function(x) any(is.na(x)))]
+test_set <- test_set[,!sapply(test_set,function(x) any(is.na(x)))]
+```
+
+```{r}
+dim(train_set)
+```
+
+Finally, a quick look at the "classe" variable shows the distribution of the outcome variable we are trying to predict.
+
+```{r}
+plot(train_set$classe,col="blue",main="Frequency of Activity Type")
+```
+
+**Predicting with Trees**
+
+The first model uses a classification tree to divide data into groups based on the split that best separates the "classe" variable.
+
+```{r}
+mod_rpart <- train(classe~.,method="rpart",data=train_set)
+print(mod_rpart)
+```
+
+The resulting tree can be plotted to demonstrate how the model is using values of various predictors to group observations and assign them to a category from A to E.
+
+```{r}
+plot(mod_rpart$finalModel,uniform=TRUE,main="Classification Tree")
+text(mod_rpart$finalModel,use.n=TRUE,all=TRUE,cex=.8)
+```
+
+Once the model is built, we can apply it to the test set.
+
+```{r}
+test_rpart <- predict(mod_rpart,newdata=test_set)
+table(test_set$classe,test_rpart)
+```
+
+Comparing the known "classe" values with the predicted values from the model reveals that this model was not particularly accurate on the test set. While it did a reasonably good job at predicting classes B and E, it was not particularly accurate in classifying the other activity types. Overall, only about 57.8% of the data in the test set was classified correctly.
+
+**Predicting with Random Forest**
+
+A second model was fitted using the Random Forest method, which generates multiple classification trees and classifies new inputs by tallying "votes" from each tree.
+
+```{r}
+library(randomForest)
+mod_rf <- randomForest(classe~.,data=train_set,ntree=500)
+mod_rf
+```
+
+Cross validation is not necessary for random forests, since error is estimated internally by constructing trees using various bootstrap samples of the original data. The out-of-bag (OOB) error estimate is 0.1%. The Confusion Matrix demonstrates the relatively low error rate using this method.
+
+We can then apply this model to our test set to estimate the out-of-sample error rate.
+
+```{r}
+test_rf <- predict(mod_rf,test_set)
+table(test_rf,test_set$classe)
+```
+
+Only 7 samples in the test set were misclassified, out of 5,885 samples. In other words, 99% of the samples in the test set were classified correctly. 
+
+**Predicting New Values**
+
+Now that we have established a model with an acceptable out-of-sample error rate, we can apply the Random Forest model to predict the class of the new values.
+
+```{r}
+#Subset the testing set to match the variables used in training set
+testing <- testing[,which(names(testing) %in% names(train_set))] 
+
+#Workaround to avoid error "Type of predictors in new data do not match that of the training data"
+train_row <- train_set[1,-58]
+testing <- rbind(train_row,testing)
+testing <- testing[-1,]
+
+#Predict new values using the model
+final.pred <- predict(mod_rf, newdata=testing)
+final.pred
+```
+
+
+
